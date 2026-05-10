@@ -30,7 +30,7 @@ canvas{display:block}
       <span id="stageLabel" style="font-weight:bold">1일차</span>
     </div>
     <div>HP: <span id="hpUI">♥♥♥</span></div>
-    <div>WASD&nbsp;|&nbsp;Space<span class="hbar"><span id="hideBarFill" style="width:100%;background:#4fa3ff"></span></span></div>
+    <div>WASD&nbsp;|&nbsp;Space숨기/Enter해제<span class="hbar"><span id="hideBarFill" style="width:100%;background:#4fa3ff"></span></span></div>
   </div>
   <canvas id="c" width="800" height="580"></canvas>
 
@@ -287,8 +287,7 @@ function updatePlayer(){
 
   player.hiding=(hidingTimer>0);
   if(hidingTimer>0){
-    hidingTimer--;
-    if(hidingTimer===0) hidingCooldown=STAGE_CONFIGS[currentStage].hidingCD;
+    // 타이머 감소 없이 유지 — 엔터로만 해제
   } else if(hidingCooldown>0){
     hidingCooldown--;
   }
@@ -742,7 +741,14 @@ function loop(){
 document.addEventListener('keydown',e=>{
   keys[e.key]=true;
   if(e.key===' '){
-    if(gameOn&&hidingCooldown<=0) hidingTimer=STAGE_CONFIGS[currentStage].hidingMax;
+    if(gameOn&&hidingCooldown<=0&&hidingTimer<=0) hidingTimer=STAGE_CONFIGS[currentStage].hidingMax;
+    e.preventDefault();
+  }
+  if(e.key==='Enter'){
+    if(gameOn&&hidingTimer>0){
+      hidingTimer=0;
+      hidingCooldown=STAGE_CONFIGS[currentStage].hidingCD;
+    }
     e.preventDefault();
   }
   e.preventDefault();
