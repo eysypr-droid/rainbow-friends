@@ -9,7 +9,7 @@
 body {
   background:#1a0033;
   display:flex; align-items:center; justify-content:center;
-  height:100vh; overflow:hidden; touch-action:none; user-select:none;
+  height:100dvh; height:100vh; overflow:hidden; touch-action:none; user-select:none;
 }
 #wrap {
   position:relative; width:800px; height:600px;
@@ -33,6 +33,15 @@ canvas { display:block; touch-action:none; }
   position:absolute; left:0; top:0; width:100%; height:100%;
   z-index:5;
 }
+#hideBtn {
+  position:absolute; bottom:20px; right:20px;
+  width:80px; height:80px; border-radius:50%;
+  background:rgba(100,60,160,0.75);
+  border:3px solid rgba(255,180,220,0.6);
+  color:#ffe0f0; font-size:14px; font-weight:bold;
+  display:none; pointer-events:auto; z-index:10;
+  cursor:pointer; touch-action:manipulation;
+}
 </style>
 </head>
 <body>
@@ -40,6 +49,7 @@ canvas { display:block; touch-action:none; }
   <canvas id="c" width="800" height="600"></canvas>
   <div id="joyOuter"><div id="joyInner"></div></div>
   <div id="touchArea"></div>
+  <button id="hideBtn">숨기</button>
 </div>
 <script>
 'use strict';
@@ -49,9 +59,12 @@ const G  = CV.getContext('2d');
 const W  = 800, H = 600;
 const wrap = document.getElementById('wrap');
 function onResize(){
-  const s = Math.min(window.innerWidth/W, window.innerHeight/H);
+  const vw = window.visualViewport ? window.visualViewport.width  : window.innerWidth;
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  const s = Math.min(vw/W, vh/H);
   wrap.style.transform = `scale(${s})`;
 }
+if(window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
 window.addEventListener('resize', onResize); onResize();
 
 // ─── Constants ────────────────────────────────────────────────
@@ -113,11 +126,17 @@ function joyEnd(e){
     joyInner.style.left='36px'; joyInner.style.top='36px';
   }
 }
+const hideBtn = document.getElementById('hideBtn');
 if(isMobile){
   touchArea.addEventListener('touchstart', joyStart,{passive:false});
   touchArea.addEventListener('touchmove',  joyMove, {passive:false});
   touchArea.addEventListener('touchend',   joyEnd,  {passive:false});
   touchArea.addEventListener('touchcancel',joyEnd,  {passive:false});
+  hideBtn.style.display='block';
+  hideBtn.addEventListener('touchstart', e=>{
+    e.preventDefault();
+    if(hideTimer===0) hideTimer=5*60;
+  },{passive:false});
 }
 
 // ─── Map definitions ──────────────────────────────────────────
@@ -1503,6 +1522,7 @@ function drawChaseArrow(){
 function render(){
   G.clearRect(0,0,W,H);
 
+  if(isMobile) hideBtn.style.opacity=(state==='playing'||state==='chase'||state==='day5')?'1':'0.3';
   if(state==='intro'){ drawIntro(); return; }
   if(state==='menu'){ drawMenu(); return; }
   if(state==='gameover'){ drawGameOver(); return; }
@@ -1652,7 +1672,7 @@ function loop(){
 
 // Init
 loadDay(1);
-state='menu';
+state='intro';
 loop();
 </script>
 </body>
