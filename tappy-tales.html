@@ -61,7 +61,10 @@ const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window
 
 // ─── Input ────────────────────────────────────────────────────
 const keys = {};
-document.addEventListener('keydown', e=>{ keys[e.key]=true; e.preventDefault(); });
+document.addEventListener('keydown', e=>{
+  if(state==='intro'){ state='menu'; return; }
+  keys[e.key]=true; e.preventDefault();
+});
 document.addEventListener('keyup',   e=>{ keys[e.key]=false; });
 
 // Touch joystick
@@ -1076,7 +1079,7 @@ function drawParticles(){
 
 // ─── State variables ──────────────────────────────────────────
 let day=1;
-let state='menu';
+let state='intro';
 let frameCount=0;
 let lives=3;
 let chestsFound=0;
@@ -1102,7 +1105,7 @@ function update(){
   frameCount++;
   if(player.invTimer>0) player.invTimer--;
 
-  if(state==='menu') return;
+  if(state==='intro'||state==='menu') return;
   if(state==='gameover'||state==='victory') return;
 
   if(state==='transition'){
@@ -1277,6 +1280,66 @@ function drawDayIntro(){
 }
 
 // ─── Screens ──────────────────────────────────────────────────
+function drawIntro(){
+  const grad=G.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1a0033');
+  grad.addColorStop(1,'#4a0060');
+  G.fillStyle=grad;
+  G.fillRect(0,0,W,H);
+
+  // Floating candy decorations
+  for(let i=0;i<20;i++){
+    const x=(i*137%W);
+    const y=(i*97%H)+(Math.sin(frameCount*0.02+i)*20);
+    G.font=`${20+i%10}px serif`;
+    G.globalAlpha=0.3+Math.sin(frameCount*0.03+i)*0.2;
+    G.fillText(CANDIES[i%CANDIES.length],x,y);
+  }
+  G.globalAlpha=1;
+
+  G.textAlign='center';
+
+  // Title small
+  G.fillStyle='#ffe082';
+  G.font='bold 38px Arial';
+  G.shadowColor='#ff69b4'; G.shadowBlur=15;
+  G.fillText('🍬 타피 테일즈',W/2,120);
+  G.shadowBlur=0;
+
+  // Info box
+  G.fillStyle='rgba(255,255,255,0.08)';
+  roundRect(G,W/2-280,170,560,230,18);
+  G.fill();
+  G.strokeStyle='rgba(255,180,220,0.4)';
+  G.lineWidth=2;
+  roundRect(G,W/2-280,170,560,230,18);
+  G.stroke();
+
+  G.fillStyle='#ffe0f0';
+  G.font='bold 20px Arial';
+  G.fillText('황석인이 만든 게임입니다.',W/2,220);
+
+  G.fillStyle='rgba(255,255,255,0.85)';
+  G.font='18px Arial';
+  G.fillText('방향키로 보물을 잡아 게임을 해 보세요.',W/2,265);
+  G.fillText('스페이스 키를 쓰면 숨기가 가능합니다.',W/2,300);
+
+  G.fillStyle='rgba(255,200,230,0.6)';
+  G.font='15px Arial';
+  G.fillText('보물상자 5개를 모으면 다음 날로 넘어갑니다!',W/2,345);
+  G.fillText('목숨: ❤️❤️❤️  몬스터에게 잡히면 목숨을 잃습니다.',W/2,368);
+
+  // Pulsing start hint
+  const pulse=0.6+Math.sin(frameCount*0.06)*0.4;
+  G.globalAlpha=pulse;
+  G.fillStyle='#ffb3d9';
+  G.font='bold 20px Arial';
+  G.fillText(isMobile?'화면을 터치하여 시작':'아무 키나 누르거나 클릭하여 시작',W/2,460);
+  G.globalAlpha=1;
+
+  G.textAlign='left';
+}
+
 function drawMenu(){
   // Background
   const grad=G.createLinearGradient(0,0,0,H);
@@ -1440,6 +1503,7 @@ function drawChaseArrow(){
 function render(){
   G.clearRect(0,0,W,H);
 
+  if(state==='intro'){ drawIntro(); return; }
   if(state==='menu'){ drawMenu(); return; }
   if(state==='gameover'){ drawGameOver(); return; }
   if(state==='victory'){ drawVictory(); return; }
@@ -1520,6 +1584,10 @@ function handleClick(e){
   const r=wrap.getBoundingClientRect(), s=r.width/W;
   const mx=(e.clientX-r.left)/s, my=(e.clientY-r.top)/s;
 
+  if(state==='intro'){
+    state='menu';
+    return;
+  }
   if(state==='menu'){
     // Play button zone
     if(mx>W/2-120&&mx<W/2+120&&my>H/2+22&&my<H/2+78){
