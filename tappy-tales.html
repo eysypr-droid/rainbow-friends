@@ -1,0 +1,1591 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🍬 타피 테일즈</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#1a0033;
+  display:flex; align-items:center; justify-content:center;
+  height:100vh; overflow:hidden; touch-action:none; user-select:none;
+}
+#wrap {
+  position:relative; width:800px; height:600px;
+  transform-origin:center center;
+}
+canvas { display:block; touch-action:none; }
+#joyOuter {
+  position:absolute; bottom:20px; left:20px;
+  width:120px; height:120px; border-radius:50%;
+  background:rgba(255,255,255,0.13);
+  border:3px solid rgba(255,200,220,0.55);
+  display:none; pointer-events:none;
+}
+#joyInner {
+  position:absolute; width:48px; height:48px;
+  background:rgba(255,180,200,0.85);
+  border-radius:50%; border:2px solid rgba(255,255,255,0.7);
+  left:36px; top:36px; pointer-events:none;
+}
+#touchArea {
+  position:absolute; left:0; top:0; width:100%; height:100%;
+  z-index:5;
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="800" height="600"></canvas>
+  <div id="joyOuter"><div id="joyInner"></div></div>
+  <div id="touchArea"></div>
+</div>
+<script>
+'use strict';
+// ─── Canvas & scale ───────────────────────────────────────────
+const CV = document.getElementById('c');
+const G  = CV.getContext('2d');
+const W  = 800, H = 600;
+const wrap = document.getElementById('wrap');
+function onResize(){
+  const s = Math.min(window.innerWidth/W, window.innerHeight/H);
+  wrap.style.transform = `scale(${s})`;
+}
+window.addEventListener('resize', onResize); onResize();
+
+// ─── Constants ────────────────────────────────────────────────
+const TS = 48;          // tile pixels
+const COLS = 26, ROWS = 20; // map size in tiles
+const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || window.innerWidth<=900;
+
+// ─── Input ────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e=>{ keys[e.key]=true; e.preventDefault(); });
+document.addEventListener('keyup',   e=>{ keys[e.key]=false; });
+
+// Touch joystick
+const joyOuter = document.getElementById('joyOuter');
+const joyInner = document.getElementById('joyInner');
+let joyDx=0, joyDy=0, joyActive=false, joyId=-1, joyBase={x:0,y:0};
+const touchArea = document.getElementById('touchArea');
+
+function joyStart(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joyActive) continue;
+    joyId=t.identifier; joyActive=true;
+    const r=wrap.getBoundingClientRect();
+    const s=r.width/W;
+    joyBase.x=(t.clientX-r.left)/s;
+    joyBase.y=(t.clientY-r.top)/s;
+    joyOuter.style.display='block';
+    joyOuter.style.left=(joyBase.x-60)+'px';
+    joyOuter.style.top=(joyBase.y-60)+'px';
+  }
+}
+function joyMove(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier!==joyId) continue;
+    const r=wrap.getBoundingClientRect();
+    const s=r.width/W;
+    const dx=(t.clientX-r.left)/s - joyBase.x;
+    const dy=(t.clientY-r.top)/s  - joyBase.y;
+    const len=Math.sqrt(dx*dx+dy*dy);
+    const maxR=48;
+    const cx=len>maxR?dx/len*maxR:dx;
+    const cy=len>maxR?dy/len*maxR:dy;
+    joyDx=cx/maxR; joyDy=cy/maxR;
+    joyInner.style.left=(36+cx)+'px';
+    joyInner.style.top=(36+cy)+'px';
+  }
+}
+function joyEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier!==joyId) continue;
+    joyDx=0; joyDy=0; joyActive=false; joyId=-1;
+    joyOuter.style.display='none';
+    joyInner.style.left='36px'; joyInner.style.top='36px';
+  }
+}
+if(isMobile){
+  touchArea.addEventListener('touchstart', joyStart,{passive:false});
+  touchArea.addEventListener('touchmove',  joyMove, {passive:false});
+  touchArea.addEventListener('touchend',   joyEnd,  {passive:false});
+  touchArea.addEventListener('touchcancel',joyEnd,  {passive:false});
+}
+
+// ─── Map definitions ──────────────────────────────────────────
+// # wall  . floor  C chest  P player-start  space=void
+// Each map: 26 cols × 20 rows
+function parseMap(rows){
+  const arr=[];
+  for(let r=0;r<ROWS;r++){
+    arr.push([]);
+    const line=(r<rows.length?rows[r]:'').padEnd(COLS,' ');
+    for(let c=0;c<COLS;c++) arr[r].push(line[c]);
+  }
+  return arr;
+}
+function findChar(map,ch){
+  const pts=[];
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(map[r][c]===ch) pts.push({c,r});
+  return pts;
+}
+
+// Day 1 — 사탕 학교 (완전 개방형)
+const MAP1 = parseMap([
+  "##########################",
+  "#........................#",
+  "#.C..............C.......#",
+  "#........................#",
+  "#......####...####.......#",
+  "#........................#",
+  "#............P...........#",
+  "#........................#",
+  "#......####...####.......#",
+  "#.......C................#",
+  "#........................#",
+  "#........................#",
+  "#..C.................C...#",
+  "#........................#",
+  "#......####...####.......#",
+  "#........................#",
+  "#........................#",
+  "#......####...####.......#",
+  "#........................#",
+  "##########################",
+]);
+
+// Day 2 — 사탕 복도 (완전 개방형)
+const MAP2 = parseMap([
+  "##########################",
+  "#........................#",
+  "#...C.............C......#",
+  "#........................#",
+  "#........................#",
+  "#.....##.......##....P...#",
+  "#........................#",
+  "#........................#",
+  "#....C.........C.........#",
+  "#........................#",
+  "#.....##.......##........#",
+  "#........................#",
+  "#........................#",
+  "#...........C............#",
+  "#........................#",
+  "#.....##.......##........#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// Day 3 — 막대사탕 복도 (완전 개방형)
+const MAP3 = parseMap([
+  "##########################",
+  "#........................#",
+  "#.C..............C.......#",
+  "#........................#",
+  "#.....##.......##........#",
+  "#......P.................#",
+  "#........................#",
+  "#...C....................#",
+  "#........................#",
+  "#.....##.......##........#",
+  "#........................#",
+  "#...........C............#",
+  "#........................#",
+  "#.....##.......##........#",
+  "#........................#",
+  "#........................#",
+  "#.....................C...#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// Day 4 — 케이크 지하실 (가운데 통로벽)
+const MAP4 = parseMap([
+  "##########################",
+  "#........................#",
+  "#..C..............C......#",
+  "#........................#",
+  "#........................#",
+  "######.########.##########",
+  "#........................#",
+  "#...P....................#",
+  "#.......C................#",
+  "#........................#",
+  "#........................#",
+  "##########.#########.#####",
+  "#........................#",
+  "#..C.....................#",
+  "#........................#",
+  "#........................#",
+  "#....................C....#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// Day 4 Chase — chocolate corridor (Chocky only, survive 15s)
+const MAP_CHASE = parseMap([
+  "##########################",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........P...............#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// Day 5 — Sewers (Ricky + Sticky)
+const MAP5 = parseMap([
+  "##########################",
+  "#.........##.............#",
+  "#.........##.............#",
+  "#.........##.............#",
+  "#.........##.............#",
+  "#########.##.#############",
+  "#.......#....#..........##",
+  "#.......#....#..........##",
+  "#.......#....#..........##",
+  "#########....#############",
+  "#............#...........#",
+  "#............#....P......#",
+  "#............#...........#",
+  "#############...##########",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// Boss — Sewer Arena (Taffy)
+const MAP_BOSS = parseMap([
+  "##########################",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#.........P..............#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "#........................#",
+  "##########################",
+]);
+
+// ─── Map helpers ──────────────────────────────────────────────
+function isWall(map, px, py, pw, ph){
+  const l=Math.floor((px)/TS), r=Math.floor((px+pw-1)/TS);
+  const t=Math.floor((py)/TS), b=Math.floor((py+ph-1)/TS);
+  for(let row=t;row<=b;row++) for(let col=l;col<=r;col++){
+    if(row<0||row>=ROWS||col<0||col>=COLS) return true;
+    const ch=map[row][col];
+    if(ch==='#') return true;
+  }
+  return false;
+}
+
+// ─── Camera ───────────────────────────────────────────────────
+let camX=0, camY=0;
+function updateCamera(px, py){
+  camX = px - W/2 + 16;
+  camY = py - H/2 + 16;
+  camX = Math.max(0, Math.min(camX, COLS*TS - W));
+  camY = Math.max(0, Math.min(camY, ROWS*TS - H));
+}
+
+// ─── Colors & Drawing ─────────────────────────────────────────
+const FLOOR_COLORS  = ['#ffe0f0','#ffd6eb','#f8c8e8','#fce4f4'];
+const WALL_COLORS_DAY = ['#ff69b4','#ff85c2','#e8407a'];
+const WALL_COLORS_SEWER = ['#4a5a3a','#3a4a2a','#5a6a4a'];
+const WALL_COLORS_BOSS  = ['#2a3a4a','#1a2a3a','#3a4a5a'];
+
+function floorCol(day,c,r){
+  const idx=(c+r)%4;
+  if(day<=4) return FLOOR_COLORS[idx];
+  return ['#9ab090','#8aa080','#aab09a','#7a9070'][idx];
+}
+function wallCol(day){
+  if(day===5) return WALL_COLORS_SEWER[Math.random()*3|0];
+  if(day===6) return WALL_COLORS_BOSS[Math.random()*3|0];
+  return WALL_COLORS_DAY[Math.random()*3|0];
+}
+
+// Candy decorations per floor tile (drawn occasionally)
+const CANDIES=['🍭','🍬','🍡','🍰','🧁','🍩','🍪','🎂'];
+
+function drawMap(map, day){
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const ch=map[r][c];
+      if(ch===' ') continue;
+      const x=c*TS-camX, y=r*TS-camY;
+      if(x>W||y>H||x<-TS||y<-TS) continue;
+      if(ch==='.'){
+        G.fillStyle=floorCol(day,c,r);
+        G.fillRect(x,y,TS,TS);
+        // subtle grid lines
+        G.strokeStyle='rgba(255,255,255,0.12)';
+        G.strokeRect(x,y,TS,TS);
+        // random candy deco (only outer ring)
+        if(((c+r*7)%17===0)&&day<=4){
+          G.font='14px serif';
+          G.fillText(CANDIES[(c*3+r*5)%CANDIES.length],x+6,y+TS-6);
+        }
+      } else if(ch==='#'){
+        const base=day>=5?(day===6?'#1e2d3e':'#3a5a2a'):'#d63075';
+        const top =day>=5?(day===6?'#2e4050':'#4a7a3a'):'#ff69b4';
+        G.fillStyle=base;
+        G.fillRect(x,y,TS,TS);
+        G.fillStyle=top;
+        G.fillRect(x+2,y+2,TS-4,TS/3);
+        // candy stripe pattern on walls (days 1-4)
+        if(day<=4){
+          G.fillStyle='rgba(255,255,255,0.25)';
+          for(let i=0;i<TS;i+=8){
+            G.fillRect(x+i,y,4,TS);
+          }
+        }
+      } else if(ch==='C'||ch==='P'){
+        G.fillStyle=floorCol(day,c,r);
+        G.fillRect(x,y,TS,TS);
+        G.strokeStyle='rgba(255,255,255,0.12)';
+        G.strokeRect(x,y,TS,TS);
+      }
+    }
+  }
+}
+
+function drawChest(cx,cy,size){
+  G.save();
+  G.translate(cx,cy);
+  // box
+  G.fillStyle='#c8830a';
+  G.fillRect(-size,-size/2,size*2,size*1.2);
+  G.fillStyle='#f0a020';
+  G.fillRect(-size,-size/2,size*2,size*0.5);
+  // lock
+  G.fillStyle='#ffe066';
+  G.beginPath(); G.arc(0,size*0.1,4,0,Math.PI*2); G.fill();
+  // sparkle
+  G.fillStyle='rgba(255,255,150,0.7)';
+  G.beginPath(); G.arc(-size*0.5,-size*0.4,3,0,Math.PI*2); G.fill();
+  G.restore();
+}
+
+// ─── Player ───────────────────────────────────────────────────
+let player={
+  x:3*TS, y:3*TS,
+  w:28, h:28,
+  speed:3.0,
+  invTimer:0,
+  facingR:true,
+};
+
+function resetPlayer(map){
+  const pts=findChar(map,'P');
+  if(pts.length){
+    player.x=pts[0].c*TS+10;
+    player.y=pts[0].r*TS+10;
+  }
+}
+
+function drawPlayer(){
+  const px=player.x-camX, py=player.y-camY;
+  const t=frameCount;
+  const bob=Math.sin(t*0.12)*2;
+  G.save();
+  if(hideTimer>0) G.globalAlpha=0.32+Math.sin(t*0.2)*0.08; // flickering transparent
+  G.translate(px+14,py+14+bob);
+  if(!player.facingR) G.scale(-1,1);
+  // body (candy wrapper shape)
+  G.fillStyle=player.invTimer>0&&(t%6<3)?'rgba(255,255,255,0.9)':'#a0e060';
+  G.beginPath();
+  G.ellipse(0,0,13,16,0,0,Math.PI*2);
+  G.fill();
+  // stripes
+  G.strokeStyle='rgba(255,255,255,0.5)';
+  G.lineWidth=2;
+  G.beginPath(); G.moveTo(-10,-5); G.lineTo(10,-5); G.stroke();
+  G.beginPath(); G.moveTo(-10,3); G.lineTo(10,3); G.stroke();
+  // head
+  G.fillStyle='#ffe0b0';
+  G.beginPath(); G.arc(0,-20,10,0,Math.PI*2); G.fill();
+  // eyes
+  G.fillStyle='#333';
+  G.beginPath(); G.arc(-4,-21,2.5,0,Math.PI*2); G.fill();
+  G.beginPath(); G.arc(5,-21,2.5,0,Math.PI*2); G.fill();
+  G.fillStyle='white';
+  G.beginPath(); G.arc(-3,-21,1,0,Math.PI*2); G.fill();
+  G.beginPath(); G.arc(6,-21,1,0,Math.PI*2); G.fill();
+  // smile
+  G.strokeStyle='#c06040'; G.lineWidth=1.5;
+  G.beginPath(); G.arc(0,-18,5,0.2,Math.PI-0.2); G.stroke();
+  // hair bow
+  G.fillStyle='#ff6699';
+  G.beginPath(); G.moveTo(-5,-31); G.quadraticCurveTo(-12,-26,-5,-23); G.fill();
+  G.beginPath(); G.moveTo(5,-31); G.quadraticCurveTo(12,-26,5,-23); G.fill();
+  G.restore();
+}
+
+// ─── Monsters ─────────────────────────────────────────────────
+// Monster types: stretch, gummy, henchman, cottonkitty, sour, fluffy, chocky, ricky, sticky, taffy
+class Monster {
+  constructor(type, tx, ty){
+    this.type=type;
+    this.x=tx*TS+10; this.y=ty*TS+10;
+    this.w=30; this.h=30;
+    this.vx=0; this.vy=0;
+    this.dir=Math.random()*Math.PI*2;
+    this.changeTimer=Math.random()*120+60;
+    this.speed=this.getBaseSpeed();
+    this.phase=Math.random()*Math.PI*2; // animation offset
+    this.alertTimer=0;
+    this.catchCooldown=0;
+    this.stretchY=1;
+    this.patrolTimer=0;
+  }
+  getBaseSpeed(){
+    switch(this.type){
+      case 'stretch':    return 1.5;
+      case 'gummy':      return 1.8;
+      case 'henchman':   return 2.0;
+      case 'cottonkitty':return 1.6;
+      case 'sour':       return 2.2;
+      case 'fluffy':     return 1.4;
+      case 'chocky':     return 3.5;
+      case 'ricky':      return 2.3;
+      case 'sticky':     return 2.8;
+      case 'taffy':      return 2.6;
+      default:           return 2.0;
+    }
+  }
+  getDetectRange(){
+    switch(this.type){
+      case 'stretch':    return 160;
+      case 'gummy':      return 140;
+      case 'henchman':   return 180;
+      case 'cottonkitty':return 150;
+      case 'sour':       return 200;
+      case 'fluffy':     return 130;
+      case 'chocky':     return 9999;
+      case 'ricky':      return 90;
+      case 'sticky':     return 170;
+      case 'taffy':      return 9999;
+      default:           return 150;
+    }
+  }
+  update(map,px,py){
+    if(this.catchCooldown>0) this.catchCooldown--;
+    const dx=px-this.x, dy=py-this.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist<1) return;
+    const detect=hideTimer>0 ? 0 : this.getDetectRange();
+    const chasing=dist<detect;
+    if(chasing){
+      this.alertTimer=30;
+      const spd=this.speed*(this.type==='chocky'?1:1.3);
+      this.vx=dx/dist*spd;
+      this.vy=dy/dist*spd;
+    } else {
+      if(this.alertTimer>0) this.alertTimer--;
+      this.changeTimer--;
+      if(this.changeTimer<=0){
+        this.dir=Math.random()*Math.PI*2;
+        this.changeTimer=Math.random()*120+60;
+      }
+      this.vx=Math.cos(this.dir)*this.speed;
+      this.vy=Math.sin(this.dir)*this.speed;
+    }
+    // move X
+    const nx=this.x+this.vx;
+    if(!isWall(map,nx,this.y,this.w,this.h)) this.x=nx;
+    else { this.dir=Math.random()*Math.PI*2; this.vx=0; }
+    // move Y
+    const ny=this.y+this.vy;
+    if(!isWall(map,this.x,ny,this.w,this.h)) this.y=ny;
+    else { this.dir=Math.random()*Math.PI*2; this.vy=0; }
+    // stretch animation
+    if(this.type==='stretch'){
+      this.stretchY=1+Math.sin(frameCount*0.15+this.phase)*0.3;
+    }
+  }
+  draw(){
+    const sx=this.x-camX, sy=this.y-camY;
+    if(sx<-60||sy<-60||sx>W+60||sy>H+60) return;
+    G.save();
+    G.translate(sx+15, sy+15);
+    const t=frameCount;
+    switch(this.type){
+      case 'stretch':    this.drawStretch(t); break;
+      case 'gummy':      this.drawGummy(t); break;
+      case 'henchman':   this.drawHenchman(t); break;
+      case 'cottonkitty':this.drawCottonKitty(t); break;
+      case 'sour':       this.drawSour(t); break;
+      case 'fluffy':     this.drawFluffy(t); break;
+      case 'chocky':     this.drawChocky(t); break;
+      case 'ricky':      this.drawRicky(t); break;
+      case 'sticky':     this.drawSticky(t); break;
+      case 'taffy':      this.drawTaffy(t); break;
+    }
+    // alert indicator
+    if(this.alertTimer>0){
+      G.fillStyle='rgba(255,50,50,0.8)';
+      G.font='bold 18px Arial';
+      G.fillText('!',- 3,-28);
+    }
+    G.restore();
+  }
+
+  // ─ Stretch: pink elongated gum monster ─
+  drawStretch(t){
+    const sy=this.stretchY;
+    G.save(); G.scale(1,sy);
+    G.fillStyle='#ff69b4';
+    G.beginPath(); G.ellipse(0,0/sy,16,22/sy,0,0,Math.PI*2); G.fill();
+    // gum texture lines
+    G.strokeStyle='#ff99cc'; G.lineWidth=2;
+    for(let i=-1;i<=1;i++){
+      G.beginPath(); G.moveTo(-14,i*6/sy); G.lineTo(14,i*6/sy); G.stroke();
+    }
+    G.restore();
+    // face
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(-6,-8,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-8,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#ff1493';
+    G.beginPath(); G.arc(-6,-8,2,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-8,2,0,Math.PI*2); G.fill();
+    // stretch mouth
+    G.strokeStyle='#cc0066'; G.lineWidth=2;
+    G.beginPath(); G.moveTo(-8,0); G.lineTo(8,0); G.stroke();
+    // antenna
+    G.strokeStyle='#ff1493'; G.lineWidth=2;
+    G.beginPath(); G.moveTo(0,-22); G.lineTo(0,-32); G.stroke();
+    G.fillStyle='#ff99cc';
+    G.beginPath(); G.arc(0,-32,4,0,Math.PI*2); G.fill();
+  }
+
+  // ─ Gummy: blue gummy bear ─
+  drawGummy(t){
+    const bob=Math.sin(t*0.1+this.phase)*3;
+    G.save(); G.translate(0,bob);
+    // body
+    G.fillStyle='#4fc3f7';
+    G.beginPath(); G.ellipse(0,5,15,18,0,0,Math.PI*2); G.fill();
+    // head
+    G.fillStyle='#29b6f6';
+    G.beginPath(); G.arc(0,-13,13,0,Math.PI*2); G.fill();
+    // ears
+    G.fillStyle='#4fc3f7';
+    G.beginPath(); G.arc(-11,-23,6,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(11,-23,6,0,Math.PI*2); G.fill();
+    // inner ear
+    G.fillStyle='#81d4fa';
+    G.beginPath(); G.arc(-11,-23,3,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(11,-23,3,0,Math.PI*2); G.fill();
+    // eyes
+    G.fillStyle='#0d47a1';
+    G.beginPath(); G.arc(-5,-13,3.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-13,3.5,0,Math.PI*2); G.fill();
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(-4,-14,1.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-14,1.5,0,Math.PI*2); G.fill();
+    // gummy shine
+    G.fillStyle='rgba(255,255,255,0.4)';
+    G.beginPath(); G.ellipse(-5,-15,6,4,Math.PI/4,0,Math.PI*2); G.fill();
+    G.restore();
+  }
+
+  // ─ Henchman: red candy-head guard ─
+  drawHenchman(t){
+    const march=Math.sin(t*0.15+this.phase)*2;
+    // body (dark suit)
+    G.fillStyle='#c62828';
+    G.fillRect(-12,march-6,24,22);
+    // candy-wrapper head
+    G.fillStyle='#ef5350';
+    G.beginPath(); G.arc(0,-16+march,14,0,Math.PI*2); G.fill();
+    // candy stripe
+    G.strokeStyle='#fff'; G.lineWidth=2.5;
+    G.beginPath(); G.arc(0,-16+march,14,Math.PI*0.1,Math.PI*0.9); G.stroke();
+    // eyes
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(-5,-16+march,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-16+march,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#b71c1c';
+    G.beginPath(); G.arc(-5,-16+march,2.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-16+march,2.5,0,Math.PI*2); G.fill();
+    // frown
+    G.strokeStyle='#7f0000'; G.lineWidth=2;
+    G.beginPath(); G.arc(0,-11+march,5,Math.PI+0.3,-0.3,false); G.stroke();
+    // buttons
+    G.fillStyle='#ffab91';
+    for(let i=0;i<3;i++){
+      G.beginPath(); G.arc(0,-2+i*6+march,2.5,0,Math.PI*2); G.fill();
+    }
+  }
+
+  // ─ Cotton Kitty: cotton candy cat ─
+  drawCottonKitty(t){
+    const sway=Math.sin(t*0.08+this.phase)*4;
+    // fluffy body
+    G.fillStyle='#e8c4e8';
+    for(let i=0;i<8;i++){
+      const a=i/8*Math.PI*2, r=18;
+      G.beginPath(); G.arc(Math.cos(a)*r*0.6, 4+Math.sin(a)*r*0.5, 10,0,Math.PI*2); G.fill();
+    }
+    G.fillStyle='#f8e0f8';
+    G.beginPath(); G.ellipse(sway,4,16,14,0,0,Math.PI*2); G.fill();
+    // head
+    G.fillStyle='#87ceeb';
+    G.beginPath(); G.arc(sway,-16,14,0,Math.PI*2); G.fill();
+    // cotton tufts on head
+    G.fillStyle='#e8c4e8';
+    G.beginPath(); G.arc(sway-6,-14,6,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(sway+6,-14,6,0,Math.PI*2); G.fill();
+    // cat ears
+    G.fillStyle='#87ceeb';
+    G.beginPath(); G.moveTo(sway-12,-24); G.lineTo(sway-18,-34); G.lineTo(sway-6,-24); G.fill();
+    G.beginPath(); G.moveTo(sway+12,-24); G.lineTo(sway+18,-34); G.lineTo(sway+6,-24); G.fill();
+    G.fillStyle='#ffb3d9';
+    G.beginPath(); G.moveTo(sway-11,-25); G.lineTo(sway-15,-31); G.lineTo(sway-7,-25); G.fill();
+    G.beginPath(); G.moveTo(sway+11,-25); G.lineTo(sway+15,-31); G.lineTo(sway+7,-25); G.fill();
+    // eyes
+    G.fillStyle='#1565c0';
+    G.beginPath(); G.arc(sway-5,-16,3.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(sway+5,-16,3.5,0,Math.PI*2); G.fill();
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(sway-4,-17,1.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(sway+6,-17,1.5,0,Math.PI*2); G.fill();
+    // nose + whiskers
+    G.fillStyle='#ff80ab';
+    G.beginPath(); G.arc(sway,-12,2.5,0,Math.PI*2); G.fill();
+    G.strokeStyle='#ccc'; G.lineWidth=1;
+    G.beginPath(); G.moveTo(sway-3,-12); G.lineTo(sway-12,-10); G.stroke();
+    G.beginPath(); G.moveTo(sway+3,-12); G.lineTo(sway+12,-10); G.stroke();
+    G.beginPath(); G.moveTo(sway-3,-13); G.lineTo(sway-12,-13); G.stroke();
+    G.beginPath(); G.moveTo(sway+3,-13); G.lineTo(sway+12,-13); G.stroke();
+    // tail
+    G.strokeStyle='#e8c4e8'; G.lineWidth=4;
+    G.beginPath();
+    G.moveTo(sway+14,8);
+    G.quadraticCurveTo(sway+28,0+Math.sin(t*0.1)*10, sway+22,-10);
+    G.stroke();
+  }
+
+  // ─ Sour: yellow lemon head, purple gloves ─
+  drawSour(t){
+    const hop=Math.abs(Math.sin(t*0.13+this.phase))*3;
+    G.save(); G.translate(0,-hop);
+    // body
+    G.fillStyle='#ffe082';
+    G.beginPath(); G.ellipse(0,6,13,15,0,0,Math.PI*2); G.fill();
+    // lemon head
+    G.fillStyle='#ffee58';
+    G.beginPath(); G.ellipse(0,-14,14,16,0,0,Math.PI*2); G.fill();
+    // lemon texture lines
+    G.strokeStyle='#ffd600'; G.lineWidth=1.5;
+    G.beginPath(); G.moveTo(0,-28); G.lineTo(0,-2); G.stroke();
+    G.beginPath(); G.moveTo(-13,-12); G.lineTo(13,-12); G.stroke();
+    // lemon tip top
+    G.fillStyle='#8bc34a';
+    G.beginPath(); G.moveTo(-3,-28); G.lineTo(0,-36); G.lineTo(3,-28); G.fill();
+    // sour expression
+    G.fillStyle='#333';
+    G.beginPath(); G.arc(-5,-16,3,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-16,3,0,Math.PI*2); G.fill();
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(-4,-17,1.2,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-17,1.2,0,Math.PI*2); G.fill();
+    // sour pucker mouth
+    G.strokeStyle='#e65100'; G.lineWidth=2;
+    G.beginPath(); G.arc(0,-8,5,Math.PI+0.3,-0.3,false); G.stroke();
+    // purple gloves
+    G.fillStyle='#7b1fa2';
+    G.beginPath(); G.ellipse(-18,8,7,6,Math.PI/6,0,Math.PI*2); G.fill();
+    G.beginPath(); G.ellipse(18,8,7,6,-Math.PI/6,0,Math.PI*2); G.fill();
+    // purple shoes
+    G.fillStyle='#4a148c';
+    G.beginPath(); G.ellipse(-7,22,8,5,0,0,Math.PI*2); G.fill();
+    G.beginPath(); G.ellipse(7,22,8,5,0,0,Math.PI*2); G.fill();
+    G.restore();
+  }
+
+  // ─ Fluffy: whipped cream cake dinosaur ─
+  drawFluffy(t){
+    const wobble=Math.sin(t*0.07+this.phase)*3;
+    // cream body (large)
+    G.fillStyle='#fff8f0';
+    G.beginPath();
+    // dino shape with cream blobs
+    for(let i=0;i<10;i++){
+      const a=i/10*Math.PI*2;
+      const r=22+Math.sin(a*3)*5;
+      G.arc(Math.cos(a)*r*0.8+wobble, 5+Math.sin(a)*r*0.7, 9,0,Math.PI*2);
+    }
+    G.fill();
+    // cake body base
+    G.fillStyle='#f9dcc4';
+    G.beginPath(); G.ellipse(wobble,6,20,18,0,0,Math.PI*2); G.fill();
+    // cake decoration
+    G.fillStyle='#ff8a65';
+    G.beginPath(); G.arc(wobble-8,0,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(wobble+6,-4,3,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(wobble,8,3,0,Math.PI*2); G.fill();
+    // cream swirls
+    G.strokeStyle='#fff8f0'; G.lineWidth=3;
+    G.beginPath(); G.arc(wobble,2,12,Math.PI,0); G.stroke();
+    G.beginPath(); G.arc(wobble,2,7,Math.PI,0); G.stroke();
+    // dino head
+    G.fillStyle='#fff8f0';
+    G.beginPath(); G.arc(wobble,-20,14,0,Math.PI*2); G.fill();
+    // spikes on head (cream)
+    G.fillStyle='#fff8f0';
+    for(let i=-1;i<=1;i++){
+      G.beginPath(); G.arc(wobble+i*7,-36,5,0,Math.PI*2); G.fill();
+    }
+    // eyes
+    G.fillStyle='#4caf50';
+    G.beginPath(); G.arc(wobble-6,-20,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(wobble+6,-20,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(wobble-5,-21,2,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(wobble+7,-21,2,0,Math.PI*2); G.fill();
+    // smile
+    G.strokeStyle='#bf360c'; G.lineWidth=2;
+    G.beginPath(); G.arc(wobble,-15,6,0.1,Math.PI-0.1); G.stroke();
+    // tail
+    G.fillStyle='#fff8f0';
+    G.beginPath(); G.moveTo(wobble+18,10); G.quadraticCurveTo(wobble+32,0,wobble+28,-12); G.lineTo(wobble+22,0); G.fill();
+  }
+
+  // ─ Chocky: brown chocolate monster ─
+  drawChocky(t){
+    const run=Math.sin(t*0.25+this.phase)*5;
+    // body
+    G.fillStyle='#5d4037';
+    G.beginPath(); G.ellipse(0,4,18,20,0,0,Math.PI*2); G.fill();
+    // chocolate drip
+    G.fillStyle='#3e2723';
+    G.beginPath(); G.arc(0,4,18,0,Math.PI); G.fill();
+    for(let i=-1;i<=1;i++){
+      G.beginPath();
+      G.moveTo(i*7,12); G.lineTo(i*5,24+Math.sin(t*0.1)*3); G.lineTo(i*9,24+Math.sin(t*0.1)*3); G.fill();
+    }
+    // head
+    G.fillStyle='#6d4c41';
+    G.beginPath(); G.arc(0,-18+run*0.3,16,0,Math.PI*2); G.fill();
+    // chocolate chunks on face
+    G.fillStyle='#3e2723';
+    G.fillRect(-8,-24,6,5);
+    G.fillRect(3,-26,7,5);
+    // angry eyes (red)
+    G.fillStyle='#f44336';
+    G.beginPath(); G.arc(-6,-18+run*0.3,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-18+run*0.3,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#b71c1c';
+    G.beginPath(); G.arc(-6,-18+run*0.3,2.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(6,-18+run*0.3,2.5,0,Math.PI*2); G.fill();
+    // frown jagged
+    G.fillStyle='#3e2723';
+    G.beginPath(); G.moveTo(-8,-12+run*0.3); G.lineTo(-4,-10+run*0.3); G.lineTo(0,-12+run*0.3); G.lineTo(4,-10+run*0.3); G.lineTo(8,-12+run*0.3); G.fill();
+  }
+
+  // ─ Ricky: blind lizard (eyes covered) ─
+  drawRicky(t){
+    const slither=Math.sin(t*0.1+this.phase)*4;
+    // body
+    G.fillStyle='#558b2f';
+    G.beginPath(); G.ellipse(slither,4,14,20,0,0,Math.PI*2); G.fill();
+    // scales
+    G.fillStyle='#33691e';
+    for(let i=-3;i<=3;i++){
+      G.beginPath(); G.arc(slither+i*4,i%2?2:6,3,0,Math.PI); G.fill();
+    }
+    // head
+    G.fillStyle='#689f38';
+    G.beginPath(); G.arc(slither,-18,13,0,Math.PI*2); G.fill();
+    // covered/sewn eyes (X pattern)
+    G.strokeStyle='#1b5e20'; G.lineWidth=2.5;
+    G.beginPath(); G.moveTo(slither-9,-22); G.lineTo(slither-4,-17); G.stroke();
+    G.beginPath(); G.moveTo(slither-4,-22); G.lineTo(slither-9,-17); G.stroke();
+    G.beginPath(); G.moveTo(slither+4,-22); G.lineTo(slither+9,-17); G.stroke();
+    G.beginPath(); G.moveTo(slither+9,-22); G.lineTo(slither+4,-17); G.stroke();
+    // Band over eyes
+    G.fillStyle='#2e7d32';
+    G.fillRect(slither-12,-22,24,6);
+    // mouth - forked tongue
+    G.fillStyle='#b71c1c';
+    G.beginPath(); G.moveTo(slither,-10); G.lineTo(slither-4,-4); G.lineTo(slither-2,-4);
+    G.lineTo(slither,-7); G.lineTo(slither+2,-4); G.lineTo(slither+4,-4); G.fill();
+    // tail
+    G.strokeStyle='#558b2f'; G.lineWidth=5;
+    G.beginPath();
+    G.moveTo(slither,22);
+    G.quadraticCurveTo(slither+18,30+Math.sin(t*0.08)*8, slither+20,44);
+    G.stroke();
+  }
+
+  // ─ Sticky: two faces no torso (green) ─
+  drawSticky(t){
+    const float=Math.sin(t*0.09+this.phase)*4;
+    const spin=Math.sin(t*0.05+this.phase)*0.3;
+    G.save(); G.rotate(spin);
+    // face 1 (top)
+    G.fillStyle='#4caf50';
+    G.beginPath(); G.arc(0,-16+float,14,0,Math.PI*2); G.fill();
+    // face 2 (bottom)
+    G.fillStyle='#388e3c';
+    G.beginPath(); G.arc(0,12-float,13,0,Math.PI*2); G.fill();
+    // connecting goo
+    G.fillStyle='rgba(76,175,80,0.5)';
+    G.beginPath();
+    G.moveTo(-6,-4+float); G.quadraticCurveTo(-10,0,- 5,4-float);
+    G.lineTo(5,4-float); G.quadraticCurveTo(10,0,6,-4+float);
+    G.fill();
+    // eyes face 1
+    G.fillStyle='#fff';
+    G.beginPath(); G.arc(-5,-16+float,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-16+float,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#1b5e20';
+    G.beginPath(); G.arc(-5,-16+float,2.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,-16+float,2.5,0,Math.PI*2); G.fill();
+    // mouth face 1
+    G.strokeStyle='#1b5e20'; G.lineWidth=2;
+    G.beginPath(); G.arc(0,-10+float,5,0.2,Math.PI-0.2); G.stroke();
+    // eyes face 2
+    G.fillStyle='#ffff00';
+    G.beginPath(); G.arc(-5,12-float,4,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,12-float,4,0,Math.PI*2); G.fill();
+    G.fillStyle='#212121';
+    G.beginPath(); G.arc(-5,12-float,2.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(5,12-float,2.5,0,Math.PI*2); G.fill();
+    // mouth face 2 (creepy smile)
+    G.strokeStyle='#1b5e20'; G.lineWidth=2;
+    G.beginPath(); G.arc(0,19-float,5,Math.PI+0.1,-0.1,false); G.stroke();
+    G.restore();
+  }
+
+  // ─ Taffy: big rat monster ─
+  drawTaffy(t){
+    const pulse=1+Math.sin(t*0.05+this.phase)*0.05;
+    G.save(); G.scale(pulse, pulse);
+    // large rat body
+    G.fillStyle='#795548';
+    G.beginPath(); G.ellipse(0,8,24,26,0,0,Math.PI*2); G.fill();
+    // fur texture
+    G.strokeStyle='#5d4037'; G.lineWidth=1.5;
+    for(let i=0;i<10;i++){
+      const a=i/10*Math.PI*2;
+      G.beginPath(); G.moveTo(Math.cos(a)*18, 8+Math.sin(a)*20);
+      G.lineTo(Math.cos(a)*24, 8+Math.sin(a)*26); G.stroke();
+    }
+    // rat head
+    G.fillStyle='#8d6e63';
+    G.beginPath(); G.ellipse(0,-22,20,18,0,0,Math.PI*2); G.fill();
+    // big ears
+    G.fillStyle='#a1887f';
+    G.beginPath(); G.arc(-20,-28,12,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(20,-28,12,0,Math.PI*2); G.fill();
+    G.fillStyle='#ef9a9a';
+    G.beginPath(); G.arc(-20,-28,7,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(20,-28,7,0,Math.PI*2); G.fill();
+    // taffy-like snout
+    G.fillStyle='#bcaaa4';
+    G.beginPath(); G.ellipse(0,-16,10,8,0,0,Math.PI*2); G.fill();
+    // nostrils
+    G.fillStyle='#6d4c41';
+    G.beginPath(); G.arc(-4,-15,2.5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(4,-15,2.5,0,Math.PI*2); G.fill();
+    // glowing eyes
+    G.fillStyle='#f44336';
+    G.beginPath(); G.arc(-9,-24,5,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(9,-24,5,0,Math.PI*2); G.fill();
+    G.fillStyle='#ffeb3b';
+    G.beginPath(); G.arc(-9,-24,3,0,Math.PI*2); G.fill();
+    G.beginPath(); G.arc(9,-24,3,0,Math.PI*2); G.fill();
+    // teeth
+    G.fillStyle='#fff9c4';
+    G.fillRect(-10,-10,8,6);
+    G.fillRect(2,-10,8,6);
+    // tail
+    G.strokeStyle='#5d4037'; G.lineWidth=5;
+    G.beginPath();
+    G.moveTo(20,20);
+    G.bezierCurveTo(40,10+Math.sin(t*0.07)*8, 48,30,44,44+Math.sin(t*0.05)*6);
+    G.stroke();
+    G.restore();
+  }
+}
+
+// ─── Game objects ─────────────────────────────────────────────
+let monsters = [];
+let chests = [];
+let activeMap = null;
+
+// Monster spawn configs per day (all positions verified as floor tiles)
+const MONSTER_SPAWNS = {
+  1: [
+    {type:'stretch', tx:5,  ty:3},   // MAP1: top-left room
+    {type:'stretch', tx:19, ty:3},   // MAP1: top-right room
+    {type:'gummy',   tx:5,  ty:9},   // MAP1: mid-left
+    {type:'gummy',   tx:20, ty:9},   // MAP1: mid-right
+  ],
+  2: [
+    {type:'stretch',    tx:4,  ty:4},   // MAP2: left passage
+    {type:'gummy',      tx:20, ty:8},   // MAP2: right mid
+    {type:'henchman',   tx:12, ty:3},   // MAP2: center-top
+    {type:'cottonkitty',tx:22, ty:14},  // MAP2: lower-right
+  ],
+  3: [
+    {type:'henchman',   tx:5,  ty:2},   // MAP3: top-left
+    {type:'cottonkitty',tx:4,  ty:5},   // MAP3: left mid
+    {type:'sour',       tx:18, ty:8},   // MAP3: right passage
+    {type:'gummy',      tx:5,  ty:9},   // MAP3: open row
+    {type:'stretch',    tx:22, ty:17},  // MAP3: lower open
+  ],
+  4: [
+    {type:'henchman',   tx:5,  ty:3},   // MAP4: top-left
+    {type:'fluffy',     tx:18, ty:6},   // MAP4: right mid
+    {type:'sour',       tx:10, ty:12},  // MAP4: center open
+    {type:'cottonkitty',tx:22, ty:17},  // MAP4: lower-right
+    {type:'gummy',      tx:8,  ty:8},   // MAP4: mid-left
+  ],
+  chase: [
+    {type:'chocky', tx:2, ty:5},   // MAP_CHASE: left side (player at col 9)
+  ],
+  5: [
+    {type:'ricky',  tx:6,  ty:3},   // MAP5: top-left section
+    {type:'sticky', tx:20, ty:3},   // MAP5: top-right section
+    {type:'ricky',  tx:14, ty:14},  // MAP5: lower open
+    {type:'sticky', tx:5,  ty:14},  // MAP5: lower open
+  ],
+  boss: [
+    {type:'taffy', tx:13, ty:10},  // MAP_BOSS: center
+  ],
+};
+
+function loadDay(d){
+  const maps={1:MAP1,2:MAP2,3:MAP3,4:MAP4,chase:MAP_CHASE,5:MAP5,boss:MAP_BOSS};
+  activeMap = maps[d] ? JSON.parse(JSON.stringify(maps[d])) : MAP1;
+  monsters=[];
+  chests=[];
+  const spawns=MONSTER_SPAWNS[d]||[];
+  for(const s of spawns) monsters.push(new Monster(s.type,s.tx,s.ty));
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    if(activeMap[r][c]==='C') chests.push({c,r,collected:false});
+  }
+  resetPlayer(activeMap);
+  updateCamera(player.x,player.y);
+}
+
+// ─── Day 5 / Boss timer ───────────────────────────────────────
+let surviveTimer=0; // countdown in frames
+
+// ─── Collision: player vs monster ─────────────────────────────
+function checkMonsterCollision(){
+  if(player.invTimer>0) return;
+  if(hideTimer>0) return;
+  const px=player.x+4, py=player.y+4, pw=player.w-8, ph=player.h-8;
+  for(const m of monsters){
+    const mx=m.x+4, my=m.y+4, mw=m.w-8, mh=m.h-8;
+    if(px<mx+mw && px+pw>mx && py<my+mh && py+ph>my){
+      lives--;
+      player.invTimer=120;
+      if(lives<=0){
+        failedDay=day; failedState=state;
+        state='gameover';
+        return;
+      }
+      // push player back
+      player.x-=(m.x-player.x)*0.5;
+      player.y-=(m.y-player.y)*0.5;
+    }
+  }
+}
+
+// ─── Chest pickup ─────────────────────────────────────────────
+function checkChestPickup(){
+  const pc=Math.floor((player.x+player.w/2)/TS);
+  const pr=Math.floor((player.y+player.h/2)/TS);
+  for(const ch of chests){
+    if(!ch.collected && Math.abs(pc-ch.c)<=1 && Math.abs(pr-ch.r)<=1){
+      ch.collected=true;
+      chestsFound++;
+      // remove from map
+      if(activeMap[ch.r][ch.c]==='C') activeMap[ch.r][ch.c]='.';
+      spawnParticles(ch.c*TS+TS/2,ch.r*TS+TS/2,'#ffd700');
+    }
+  }
+}
+
+// ─── Particles ────────────────────────────────────────────────
+let particles=[];
+function spawnParticles(wx,wy,color){
+  for(let i=0;i<16;i++){
+    const a=Math.random()*Math.PI*2, spd=2+Math.random()*3;
+    particles.push({x:wx,y:wy,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:40,color});
+  }
+}
+function updateParticles(){
+  particles=particles.filter(p=>{
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life--;
+    return p.life>0;
+  });
+}
+function drawParticles(){
+  for(const p of particles){
+    const sx=p.x-camX, sy=p.y-camY;
+    G.globalAlpha=p.life/40;
+    G.fillStyle=p.color;
+    G.beginPath(); G.arc(sx,sy,3+p.life/20,0,Math.PI*2); G.fill();
+  }
+  G.globalAlpha=1;
+}
+
+// ─── State variables ──────────────────────────────────────────
+let day=1;
+let state='menu';
+let frameCount=0;
+let lives=3;
+let chestsFound=0;
+const CHESTS_NEEDED=5;
+let failedDay=1;
+let failedState='playing';
+let hideTimer=0;  // frames remaining while hiding (5s = 300f)
+let transTimer=0;
+let transMsg='';
+let showMsgTimer=0;
+let showMsg='';
+let victoryBounce=0;
+
+// ─── Transition ───────────────────────────────────────────────
+function startTransition(msg, nextFn){
+  transMsg=msg; transTimer=180; state='transition';
+  transNextFn=nextFn;
+}
+let transNextFn=null;
+
+// ─── Update ───────────────────────────────────────────────────
+function update(){
+  frameCount++;
+  if(player.invTimer>0) player.invTimer--;
+
+  if(state==='menu') return;
+  if(state==='gameover'||state==='victory') return;
+
+  if(state==='transition'){
+    transTimer--;
+    if(transTimer<=0 && transNextFn){ transNextFn(); transNextFn=null; }
+    return;
+  }
+
+  // ── Player movement ──
+  let dx=0, dy=0;
+  if(keys['ArrowLeft']||keys['a']||keys['A']) dx-=1;
+  if(keys['ArrowRight']||keys['d']||keys['D']) dx+=1;
+  if(keys['ArrowUp']||keys['w']||keys['W']) dy-=1;
+  if(keys['ArrowDown']||keys['s']||keys['S']) dy+=1;
+  if(isMobile){ dx+=joyDx; dy+=joyDy; }
+  const spd=player.speed;
+  if(dx!==0||dy!==0){
+    const len=Math.sqrt(dx*dx+dy*dy);
+    dx/=len; dy/=len;
+    if(dx!==0) player.facingR=(dx>0);
+    const nx=player.x+dx*spd;
+    if(!isWall(activeMap,nx,player.y,player.w,player.h)) player.x=nx;
+    const ny=player.y+dy*spd;
+    if(!isWall(activeMap,player.x,ny,player.w,player.h)) player.y=ny;
+  }
+  updateCamera(player.x,player.y);
+
+  // ── Hide mechanic (spacebar) ──
+  if(keys[' '] && hideTimer===0){
+    hideTimer=5*60;
+    keys[' ']=false;
+  }
+  if(hideTimer>0) hideTimer--;
+
+  // ── Monster update ──
+  for(const m of monsters) m.update(activeMap,player.x,player.y);
+
+  // ── Collisions ──
+  checkMonsterCollision();
+  if(state==='gameover') return;
+
+  // ── State-specific logic ──
+  if(state==='playing'){
+    checkChestPickup();
+    if(chestsFound>=CHESTS_NEEDED){
+      if(day<4){
+        day++;
+        chestsFound=0;
+        startTransition(`✨ ${day-1}일차 클리어!\n${day}일차로 이동합니다...`, ()=>{
+          loadDay(day);
+          state='playing';
+        });
+      } else {
+        chestsFound=0;
+        startTransition('🍫 4일차 클리어!\n초키의 추격전! 15초 버텨라!', ()=>{
+          surviveTimer=15*60;
+          loadDay('chase');
+          state='chase';
+        });
+      }
+    }
+  }
+
+  if(state==='chase'){
+    surviveTimer--;
+    if(surviveTimer<=0){
+      startTransition('🎉 탈출 성공!\n5일차 하수구로 이동합니다...', ()=>{
+        day=5;
+        chestsFound=0;
+        surviveTimer=60*60;
+        loadDay(5);
+        state='day5';
+      });
+    }
+  }
+
+  if(state==='day5'){
+    surviveTimer--;
+    if(surviveTimer<=0){
+      startTransition('💪 1분 생존!\n보스 타피와의 싸움이 시작됩니다!', ()=>{
+        surviveTimer=30*60; // 30 seconds
+        loadDay('boss');
+        state='boss';
+      });
+    }
+  }
+
+  if(state==='boss'){
+    surviveTimer--;
+    if(surviveTimer<=0){
+      state='victory';
+      victoryBounce=0;
+    }
+  }
+
+  updateParticles();
+}
+
+// ─── Draw UI ──────────────────────────────────────────────────
+function drawHUD(){
+  // Background bar
+  G.fillStyle='rgba(0,0,0,0.5)';
+  G.fillRect(0,0,W,44);
+
+  // Hearts (lives)
+  G.font='26px serif';
+  for(let i=0;i<3;i++){
+    G.globalAlpha=(i<lives)?1:0.25;
+    G.fillText('❤️',10+i*34,32);
+  }
+  G.globalAlpha=1;
+
+  // Day
+  G.fillStyle='#ffe082';
+  G.font='bold 18px Arial';
+  if(state==='playing') G.fillText(`${day}일차`,120,28);
+  else if(state==='chase') G.fillText('추격전!',120,28);
+  else if(state==='day5')  G.fillText('5일차',120,28);
+  else if(state==='boss')  G.fillText('보스전!',120,28);
+
+  // Chest counter (days 1-4)
+  if(state==='playing'){
+    G.font='22px serif';
+    G.fillText('📦',200,30);
+    G.fillStyle='#fff';
+    G.font='bold 16px Arial';
+    G.fillText(`${chestsFound} / ${CHESTS_NEEDED}`,228,28);
+  }
+
+  // Timer (chase, day5, boss)
+  if(state==='chase'||state==='day5'||state==='boss'){
+    const secs=Math.ceil(surviveTimer/60);
+    G.fillStyle=secs<=10?'#f44336':'#a5d6a7';
+    G.font='bold 22px Arial';
+    G.fillText(`⏱️ ${secs}초`,200,29);
+  }
+
+  // Day label top-right
+  G.textAlign='right';
+  G.fillStyle='#ffcc80';
+  G.font='14px Arial';
+  const stateLabel={
+    playing:`${day}일차 탐험`,
+    chase:'추격전 탈출',
+    day5:'5일차 생존',
+    boss:'타피 보스전',
+  };
+  if(stateLabel[state]) G.fillText(stateLabel[state],W-10,28);
+  G.textAlign='left';
+}
+
+function drawDayIntro(){
+  const intros={
+    1:'1일차: 스트레치와 구미를 피해라!',
+    2:'2일차: 헨치맨과 코튼 키티 등장!',
+    3:'3일차: 사워가 나타났다!',
+    4:'4일차: 플러피를 조심해라!',
+  };
+  if(showMsgTimer>0 && showMsg){
+    const alpha=Math.min(1,showMsgTimer/30);
+    G.fillStyle=`rgba(0,0,0,${alpha*0.7})`;
+    G.fillRect(W/2-200,H/2-35,400,70);
+    G.globalAlpha=alpha;
+    G.fillStyle='#ffe082';
+    G.font='bold 20px Arial';
+    G.textAlign='center';
+    G.fillText(showMsg,W/2,H/2+7);
+    G.textAlign='left';
+    G.globalAlpha=1;
+    showMsgTimer--;
+  }
+}
+
+// ─── Screens ──────────────────────────────────────────────────
+function drawMenu(){
+  // Background
+  const grad=G.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1a0033');
+  grad.addColorStop(1,'#4a0060');
+  G.fillStyle=grad;
+  G.fillRect(0,0,W,H);
+
+  // Floating candy decorations
+  for(let i=0;i<20;i++){
+    const x=(i*137%W);
+    const y=(i*97%H)+(Math.sin(frameCount*0.02+i)*20);
+    G.font=`${20+i%10}px serif`;
+    G.globalAlpha=0.4+Math.sin(frameCount*0.03+i)*0.3;
+    G.fillText(CANDIES[i%CANDIES.length],x,y);
+  }
+  G.globalAlpha=1;
+
+  // Title
+  G.textAlign='center';
+  G.shadowColor='#ff69b4';
+  G.shadowBlur=20;
+  G.fillStyle='#ffe082';
+  G.font='bold 58px Arial';
+  G.fillText('🍬 타피 테일즈',W/2,H/2-80);
+  G.shadowBlur=0;
+
+  G.fillStyle='#f8bbd0';
+  G.font='22px Arial';
+  G.fillText('달콤한 학교에서 살아남아라!',W/2,H/2-30);
+
+  // Pulsing play button
+  const pulse=1+Math.sin(frameCount*0.06)*0.08;
+  G.save();
+  G.translate(W/2,H/2+50);
+  G.scale(pulse,pulse);
+  G.fillStyle='#ff4081';
+  roundRect(G,-120,-28,240,56,28);
+  G.fill();
+  G.fillStyle='#fff';
+  G.font='bold 26px Arial';
+  G.fillText('▶  게임 시작',0,10);
+  G.restore();
+
+  G.fillStyle='rgba(255,255,255,0.6)';
+  G.font='16px Arial';
+  G.fillText(isMobile?'화면을 터치하여 시작':'WASD / 방향키로 이동',W/2,H/2+130);
+  G.fillText('보물상자 5개를 찾아서 탈출하세요!',W/2,H/2+155);
+
+  G.textAlign='left';
+}
+
+function drawGameOver(){
+  G.fillStyle='rgba(0,0,0,0.85)';
+  G.fillRect(0,0,W,H);
+  G.textAlign='center';
+  G.fillStyle='#f44336';
+  G.font='bold 60px Arial';
+  G.shadowColor='#ff0000'; G.shadowBlur=30;
+  G.fillText('💀 게임 오버',W/2,H/2-55);
+  G.shadowBlur=0;
+  const stageNames={playing:`${failedDay}일차`,chase:'추격전',day5:'5일차',boss:'보스전'};
+  const sn=stageNames[failedState]||`${failedDay}일차`;
+  G.fillStyle='#fff';
+  G.font='22px Arial';
+  G.fillText(`${sn}에서 실패했습니다`,W/2,H/2+5);
+  const pulse=1+Math.sin(frameCount*0.07)*0.08;
+  // Retry button
+  G.save(); G.translate(W/2,H/2+65); G.scale(pulse,pulse);
+  G.fillStyle='#ff4081';
+  roundRect(G,-125,-25,250,50,25); G.fill();
+  G.fillStyle='#fff'; G.font='bold 20px Arial';
+  G.fillText(`🔄 ${sn} 다시하기`,0,8);
+  G.restore();
+  // Back to menu button
+  G.save(); G.translate(W/2,H/2+132); G.scale(pulse,pulse);
+  G.fillStyle='#555';
+  roundRect(G,-100,-22,200,44,22); G.fill();
+  G.fillStyle='#ccc'; G.font='bold 18px Arial';
+  G.fillText('🏠 처음부터',0,7);
+  G.restore();
+  G.textAlign='left';
+}
+
+function drawVictory(){
+  G.fillStyle='rgba(0,0,0,0.8)';
+  G.fillRect(0,0,W,H);
+  G.textAlign='center';
+  const t=frameCount;
+  // Rainbow text effect
+  const cols=['#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#ff6bff'];
+  G.font='bold 52px Arial';
+  const title='🎉 축하합니다! 🎉';
+  for(let i=0;i<title.length;i++){
+    const col=cols[(i+Math.floor(t/5))%cols.length];
+    const bounce=Math.sin(t*0.1+i*0.5)*10;
+    G.fillStyle=col;
+    G.fillText(title[i], W/2-title.length*14+i*28, H/2-70+bounce);
+  }
+  G.fillStyle='#ffe082';
+  G.font='bold 28px Arial';
+  G.fillText('타피 테일즈 클리어!',W/2,H/2-10);
+  G.fillStyle='#f8bbd0';
+  G.font='20px Arial';
+  G.fillText('모든 일차를 완료하고 타피를 물리쳤습니다!',W/2,H/2+30);
+  const pulse=1+Math.sin(t*0.07)*0.08;
+  G.save(); G.translate(W/2,H/2+100); G.scale(pulse,pulse);
+  G.fillStyle='#ff4081';
+  roundRect(G,-110,-25,220,50,25); G.fill();
+  G.fillStyle='#fff'; G.font='bold 22px Arial';
+  G.fillText('🔄 처음으로',0,8);
+  G.restore();
+  G.textAlign='left';
+}
+
+function drawTransition(){
+  G.fillStyle='rgba(0,0,0,0.78)';
+  G.fillRect(0,0,W,H);
+  G.textAlign='center';
+  G.fillStyle='#ffe082';
+  G.font='bold 30px Arial';
+  const lines=transMsg.split('\n');
+  for(let i=0;i<lines.length;i++){
+    G.fillText(lines[i],W/2,H/2-20+i*44);
+  }
+  // loading dots
+  const dots='.'.repeat(1+Math.floor(frameCount/20)%4);
+  G.fillStyle='rgba(255,255,255,0.6)';
+  G.font='22px Arial';
+  G.fillText(dots,W/2,H/2+80);
+  G.textAlign='left';
+}
+
+// ─── Rounded rect helper ──────────────────────────────────────
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.lineTo(x+w-r,y);
+  ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r);
+  ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h);
+  ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r);
+  ctx.arcTo(x,y,x+r,y,r);
+  ctx.closePath();
+}
+
+// ─── Chase intro guidance ──────────────────────────────────────
+function drawChaseArrow(){
+  if(state!=='chase') return;
+  const t=frameCount;
+  G.fillStyle=`rgba(255,80,80,${0.6+Math.sin(t*0.15)*0.4})`;
+  G.font='bold 26px Arial';
+  G.textAlign='center';
+  G.fillText('🍫 초키를 피해라!',W/2,H-50);
+  G.textAlign='left';
+}
+
+// ─── Main render ──────────────────────────────────────────────
+function render(){
+  G.clearRect(0,0,W,H);
+
+  if(state==='menu'){ drawMenu(); return; }
+  if(state==='gameover'){ drawGameOver(); return; }
+  if(state==='victory'){ drawVictory(); return; }
+  if(state==='transition'){ drawTransition(); return; }
+
+  // Background
+  const bg = (day>=5||state==='boss'||state==='chase')?
+    (state==='boss'?'#0d1b2a':'#1b2e1b') : '#2d0a4e';
+  G.fillStyle=bg;
+  G.fillRect(0,0,W,H);
+
+  // mapDay: 1-4=candy, 5=sewer, 6=boss-dark; chase uses 4 (dark candy/chocolate look)
+  const mapDay = state==='boss'?6:(state==='day5'?5:(state==='chase'?4:day));
+  drawMap(activeMap, mapDay);
+
+  // Chests
+  for(const ch of chests){
+    if(!ch.collected){
+      const cx=ch.c*TS-camX, cy=ch.r*TS-camY;
+      if(cx>-60&&cy>-60&&cx<W+60&&cy<H+60){
+        // floor under
+        G.fillStyle=floorCol(day,ch.c,ch.r);
+        G.fillRect(cx,cy,TS,TS);
+        drawChest(cx+TS/2,cy+TS/2,18);
+        // glow
+        const glow=0.4+Math.sin(frameCount*0.07+ch.c)*0.3;
+        G.fillStyle=`rgba(255,220,50,${glow})`;
+        G.beginPath(); G.arc(cx+TS/2,cy+TS/2,24,0,Math.PI*2); G.fill();
+        drawChest(cx+TS/2,cy+TS/2,18);
+      }
+    }
+  }
+
+  // Monsters
+  for(const m of monsters) m.draw();
+
+  // Player
+  drawPlayer();
+
+  // Hide timer above player
+  if(hideTimer>0){
+    const hx=player.x-camX+14, hy=player.y-camY-22;
+    const secs=Math.ceil(hideTimer/60);
+    G.textAlign='center';
+    G.fillStyle='rgba(60,140,255,0.88)';
+    G.beginPath(); G.arc(hx,hy,17,0,Math.PI*2); G.fill();
+    G.fillStyle='#fff';
+    G.font='bold 12px Arial';
+    G.fillText(secs, hx, hy+4);
+    G.textAlign='left';
+  }
+
+  // Particles
+  drawParticles();
+
+  // Chase arrow
+  drawChaseArrow();
+
+  // HUD
+  drawHUD();
+  drawDayIntro();
+
+  // Survival progress bar (chase, day5, boss)
+  if(state==='chase'||state==='day5'||state==='boss'){
+    const total=state==='boss'?30*60:(state==='chase'?15*60:60*60);
+    const pct=surviveTimer/total;
+    G.fillStyle='rgba(0,0,0,0.4)';
+    G.fillRect(W/2-120,H-20,240,12);
+    G.fillStyle=pct>0.5?'#4caf50':pct>0.2?'#ff9800':'#f44336';
+    G.fillRect(W/2-120,H-20,240*pct,12);
+    G.strokeStyle='rgba(255,255,255,0.4)';
+    G.strokeRect(W/2-120,H-20,240,12);
+  }
+}
+
+// ─── Input: menu & button clicks ──────────────────────────────
+function handleClick(e){
+  const r=wrap.getBoundingClientRect(), s=r.width/W;
+  const mx=(e.clientX-r.left)/s, my=(e.clientY-r.top)/s;
+
+  if(state==='menu'){
+    // Play button zone
+    if(mx>W/2-120&&mx<W/2+120&&my>H/2+22&&my<H/2+78){
+      startGame();
+    }
+  }
+  if(state==='gameover'){
+    // Retry current stage
+    if(mx>W/2-125&&mx<W/2+125&&my>H/2+40&&my<H/2+90){
+      retryStage();
+    }
+    // Back to menu
+    if(mx>W/2-100&&mx<W/2+100&&my>H/2+110&&my<H/2+154){
+      resetGame();
+    }
+  }
+  if(state==='victory'){
+    if(mx>W/2-110&&mx<W/2+110&&my>H/2+75&&my<H/2+125){
+      resetGame();
+    }
+  }
+}
+touchArea.addEventListener('click', handleClick);
+touchArea.addEventListener('touchend', e=>{
+  e.preventDefault();
+  handleClick({clientX:e.changedTouches[0].clientX, clientY:e.changedTouches[0].clientY});
+},{passive:false});
+
+function startGame(){
+  day=1; lives=3; chestsFound=0; hideTimer=0; state='playing';
+  loadDay(1);
+  showMsg='1일차: 스트레치와 구미를 피해라!';
+  showMsgTimer=180;
+}
+
+function retryStage(){
+  lives=3; chestsFound=0; particles=[]; hideTimer=0;
+  if(failedState==='playing'){
+    day=failedDay; state='playing';
+    loadDay(day);
+    const msgs={1:'1일차: 스트레치와 구미를 피해라!',2:'2일차: 헨치맨과 코튼 키티 등장!',3:'3일차: 사워가 나타났다!',4:'4일차: 플러피를 조심해라!'};
+    showMsg=msgs[day]||''; showMsgTimer=180;
+  } else if(failedState==='chase'){
+    surviveTimer=15*60; state='chase'; loadDay('chase');
+  } else if(failedState==='day5'){
+    day=5; surviveTimer=60*60; state='day5'; loadDay(5);
+  } else if(failedState==='boss'){
+    surviveTimer=30*60; state='boss'; loadDay('boss');
+  }
+}
+
+function resetGame(){
+  day=1; lives=3; chestsFound=0; surviveTimer=0; hideTimer=0; state='menu'; particles=[];
+}
+
+// ─── Game loop ────────────────────────────────────────────────
+function loop(){
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+// Init
+loadDay(1);
+state='menu';
+loop();
+</script>
+</body>
+</html>
