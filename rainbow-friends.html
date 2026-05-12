@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Rainbow Friends - 생존 미니게임</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a0a0f;
+  display:flex; justify-content:center; align-items:center;
+  min-height:100vh;
+  font-family:'Courier New',monospace;
+  color:#fff;
+  overflow:hidden;
+}
+#ui {
+  position:fixed; top:0; left:0; width:100%;
+  display:flex; justify-content:space-between; align-items:center;
+  padding:12px 20px;
+  background:rgba(0,0,0,0.6);
+  z-index:10;
+  font-size:15px;
+}
+#ui span { color:#ffd700; font-weight:bold; font-size:18px; }
+canvas { display:block; border:2px solid #333; }
+.overlay {
+  position:fixed; inset:0;
+  background:rgba(0,0,0,0.88);
+  display:flex; flex-direction:column;
+  justify-content:center; align-items:center;
+  gap:18px; z-index:20;
+}
+.overlay h1 { font-size:36px; letter-spacing:4px; }
+.overlay h2 { font-size:28px; }
+.overlay p  { color:#aaa; font-size:14px; text-align:center; line-height:1.8; }
+.rainbow-text span:nth-child(1){color:#4fa3ff}
+.rainbow-text span:nth-child(2){color:#4dff91}
+.rainbow-text span:nth-child(3){color:#ff7c2a}
+.rainbow-text span:nth-child(4){color:#ff4444}
+.rainbow-text span:nth-child(5){color:#bf44ff}
+.btn {
+  background:transparent; border:2px solid #4fa3ff;
+  color:#4fa3ff; padding:12px 36px; font-size:17px;
+  font-family:'Courier New',monospace;
+  cursor:pointer; letter-spacing:2px; border-radius:6px;
+  transition:all .2s;
+}
+.btn:hover { background:#4fa3ff; color:#000; box-shadow:0 0 20px #4fa3ff; }
+#legend {
+  display:flex; gap:14px; flex-wrap:wrap; justify-content:center;
+  margin-top:4px;
+}
+.leg { display:flex; align-items:center; gap:6px; font-size:13px; }
+.dot { width:14px; height:14px; border-radius:50%; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div>점수: <span id="score">0</span></div>
+  <div>상자: <span id="boxes">0</span>/5</div>
+  <div>생존: <span id="timer">60</span>초</div>
+  <div>HP: <span id="hp">♥♥♥</span></div>
+</div>
+
+<canvas id="c"></canvas>
+
+<div class="overlay" id="startScreen">
+  <h1 class="rainbow-text">
+    <span>R</span><span>A</span><span>I</span><span>N</span><span>B</span><span>O</span><span>W</span>
+    &nbsp;
+    <span>F</span><span>R</span><span>I</span><span>E</span><span>N</span><span>D</span><span>S</span>
+  </h1>
+  <p>
+    상자 5개를 모아 탈출하거나 60초를 버텨라!<br>
+    레인보우 프렌즈에게 잡히면 HP가 줄어든다.
+  </p>
+  <div id="legend">
+    <div class="leg"><div class="dot" style="background:#4fa3ff"></div>Blue - 추적형</div>
+    <div class="leg"><div class="dot" style="background:#4dff91"></div>Green - 랜덤형 (장님)</div>
+    <div class="leg"><div class="dot" style="background:#ff7c2a"></div>Orange - 굶주린 추적자</div>
+    <div class="leg"><div class="dot" style="background:#ff4444"></div>Red - 고속 매복</div>
+    <div class="leg"><div class="dot" style="background:#bf44ff"></div>Purple - 함정형</div>
+  </div>
+  <p>WASD / 방향키로 이동</p>
+  <button class="btn" onclick="startGame()">START</button>
+</div>
+
+<div class="overlay" id="clearScreen" style="display:none">
+  <h2 style="color:#ffd700">🎉 탈출 성공!</h2>
+  <p id="clearMsg"></p>
+  <button class="btn" onclick="startGame()">다시 하기</button>
+</div>
+
+<div class="overlay" id="overScreen" style="display:none">
+  <h2 style="color:#ff4444">💀 GAME OVER</h2>
+  <p id="overMsg"></p>
+  <button class="btn" onclick="startGame()">다시 하기</button>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const W = 800, H = 600;
+canvas.width = W; canvas.height = H;
+
+const TILE = 40;
+const COLS = W / TILE, ROWS = H / TILE;
+
+// --- 맵 (1=벽, 0=바닥, 2=상자스폰) ---
+const MAP_TEMPLATE = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,1,1,0,0,1,0,1,1,1,0,1,1,0,1,1,0,0,1],
+  [1,0,1,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,1],
+  [1,0,0,0,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,1,0,1,0,0,0,0,1,1,1,0,1,1,0,0,0,0,1],
+  [1,0,1,0,0,0,1,0,0,0,0,1,0,0,0,0,1,1,0,1],
+  [1,0,0,0,1,0,1,0,1,1,0,0,0,1,0,0,0,0,0,1],
+  [1,0,1,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,0,1],
+  [1,0,1,1,0,1,1,0,1,0,1,1,0,0,0,1,0,1,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,1,0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,1,1,0,0,1,0,0,0,1,0,0,1,0,0,0,1,0,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+let map, player, enemies, boxes, score, hp, timeLeft, gameRunning, collected;
+let keys = {};
+let animId, timerInterval;
+let camX = 0, camY = 0;
+let invincible = 0;
+let purpleTraps = [];
+
+const PLAYER_SPD = 3;
+const COLORS_LIST = ['#4fa3ff','#4dff91','#ff7c2a','#ff4444','#bf44ff'];
+const NAMES = ['Blue','Green','Orange','Red','Purple'];
+
+function startGame() {
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('clearScreen').style.display = 'none';
+  document.getElementById('overScreen').style.display = 'none';
+
+  map = MAP_TEMPLATE.map(r => [...r]);
+  score = 0; hp = 3; timeLeft = 60; collected = 0;
+  invincible = 0; purpleTraps = [];
+
+  player = { x:45, y:45, w:28, h:28, vx:0, vy:0, facing:0 };
+
+  // 상자 배치 (빈 공간 랜덤)
+  boxes = [];
+  const empties = [];
+  for (let r=1;r<ROWS-1;r++)
+    for (let c=1;c<COLS-1;c++)
+      if (map[r][c]===0 && !(c<4&&r<4)) empties.push({x:c*TILE+6,y:r*TILE+6});
+  shuffle(empties);
+  for (let i=0;i<5;i++) boxes.push({...empties[i], collected:false});
+
+  // 적 생성
+  enemies = [
+    makeEnemy(0, 14*TILE, 1*TILE),   // Blue
+    makeEnemy(1, 18*TILE, 12*TILE),  // Green
+    makeEnemy(2, 10*TILE, 8*TILE),   // Orange
+    makeEnemy(3, 14*TILE, 8*TILE),   // Red
+    makeEnemy(4, 5*TILE, 12*TILE),   // Purple
+  ];
+
+  gameRunning = true;
+  updateUI();
+  clearInterval(timerInterval);
+  timerInterval = setInterval(tick, 1000);
+  if (animId) cancelAnimationFrame(animId);
+  loop();
+}
+
+function makeEnemy(type, x, y) {
+  const speeds = [1.4, 1.8, 1.6, 2.4, 0];
+  return {
+    type, x, y, w:30, h:34,
+    vx: (Math.random()-.5)*2, vy:(Math.random()-.5)*2,
+    speed: speeds[type],
+    angle: Math.random()*Math.PI*2,
+    timer: 0,
+    trapTimer: type===4 ? 120 : 0,
+  };
+}
+
+function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+
+function isWall(px, py) {
+  const c = Math.floor(px/TILE), r = Math.floor(py/TILE);
+  if (r<0||r>=ROWS||c<0||c>=COLS) return true;
+  return map[r][c]===1;
+}
+
+function wallSlide(obj, dx, dy) {
+  const margin = 2;
+  const nx = obj.x + dx, ny = obj.y + dy;
+  const w = obj.w - margin, h = obj.h - margin;
+
+  let canX = !isWall(nx+margin,obj.y+margin) && !isWall(nx+w,obj.y+margin) &&
+             !isWall(nx+margin,obj.y+h) && !isWall(nx+w,obj.y+h);
+  let canY = !isWall(obj.x+margin,ny+margin) && !isWall(obj.x+w,ny+margin) &&
+             !isWall(obj.x+margin,ny+h) && !isWall(obj.x+w,ny+h);
+  if (canX) obj.x = nx;
+  if (canY) obj.y = ny;
+  return {canX, canY};
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function updatePlayer() {
+  let dx=0,dy=0;
+  if (keys['ArrowLeft']||keys['a']||keys['A']) dx=-1;
+  if (keys['ArrowRight']||keys['d']||keys['D']) dx=1;
+  if (keys['ArrowUp']||keys['w']||keys['W']) dy=-1;
+  if (keys['ArrowDown']||keys['s']||keys['S']) dy=1;
+  if (dx&&dy){dx*=0.707;dy*=0.707;}
+  const res = wallSlide(player, dx*PLAYER_SPD, dy*PLAYER_SPD);
+  if (dx!==0||dy!==0) player.facing = Math.atan2(dy,dx);
+
+  // 상자 수집
+  for (const b of boxes) {
+    if (!b.collected && Math.abs(player.x-b.x)<30 && Math.abs(player.y-b.y)<30) {
+      b.collected = true;
+      collected++;
+      score += 200;
+      updateUI();
+      if (collected>=5) { endGame(true); return; }
+    }
+  }
+
+  // 함정 밟기
+  for (let i=purpleTraps.length-1;i>=0;i--) {
+    const t = purpleTraps[i];
+    if (!t.triggered && Math.abs(player.x-t.x)<24 && Math.abs(player.y-t.y)<24) {
+      t.triggered = true;
+      hurtPlayer();
+      setTimeout(()=>purpleTraps.splice(purpleTraps.indexOf(t),1),1000);
+    }
+  }
+}
+
+function updateEnemies() {
+  for (const e of enemies) {
+    e.timer++;
+    if (e.type===0) { // Blue - 시야 내 추적
+      const d = dist(e,player);
+      if (d<200) {
+        const ang = Math.atan2(player.y-e.y, player.x-e.x);
+        const r = wallSlide(e, Math.cos(ang)*e.speed, Math.sin(ang)*e.speed);
+        if (!r.canX&&!r.canY) e.angle = Math.random()*Math.PI*2;
+      } else {
+        randomMove(e);
+      }
+    } else if (e.type===1) { // Green - 완전 랜덤
+      if (e.timer%60===0) e.angle = Math.random()*Math.PI*2;
+      const r = wallSlide(e, Math.cos(e.angle)*e.speed, Math.sin(e.angle)*e.speed);
+      if (!r.canX||!r.canY) e.angle = Math.random()*Math.PI*2;
+    } else if (e.type===2) { // Orange - 가까우면 빠르게 추적
+      const d = dist(e,player);
+      const spd = d<150 ? e.speed*1.8 : e.speed*0.7;
+      if (d<300) {
+        const ang = Math.atan2(player.y-e.y, player.x-e.x);
+        const r = wallSlide(e, Math.cos(ang)*spd, Math.sin(ang)*spd);
+        if (!r.canX&&!r.canY) e.angle = Math.random()*Math.PI*2;
+      } else randomMove(e);
+    } else if (e.type===3) { // Red - 고속, 항상 추적
+      const ang = Math.atan2(player.y-e.y, player.x-e.x);
+      const r = wallSlide(e, Math.cos(ang)*e.speed, Math.sin(ang)*e.speed);
+      if (!r.canX&&!r.canY) e.angle = Math.random()*Math.PI*2;
+    } else if (e.type===4) { // Purple - 함정 설치
+      e.trapTimer--;
+      if (e.trapTimer<=0) {
+        e.trapTimer = 180 + Math.random()*120;
+        purpleTraps.push({x:e.x, y:e.y, triggered:false, age:0});
+      }
+      randomMove(e);
+    }
+
+    // 플레이어 충돌
+    if (invincible<=0 && dist(e,player)<26) {
+      hurtPlayer();
+    }
+  }
+  purpleTraps.forEach(t=>t.age++);
+}
+
+function randomMove(e) {
+  if (e.timer%90===0) e.angle = Math.random()*Math.PI*2;
+  const r = wallSlide(e, Math.cos(e.angle)*e.speed, Math.sin(e.angle)*e.speed);
+  if (!r.canX||!r.canY) e.angle += Math.PI + (Math.random()-.5);
+}
+
+function hurtPlayer() {
+  hp--;
+  invincible = 120;
+  updateUI();
+  if (hp<=0) endGame(false);
+}
+
+function endGame(win) {
+  gameRunning = false;
+  clearInterval(timerInterval);
+  cancelAnimationFrame(animId);
+  if (win) {
+    document.getElementById('clearMsg').textContent = `최종 점수: ${score + timeLeft*10} (시간 보너스 +${timeLeft*10})`;
+    document.getElementById('clearScreen').style.display = 'flex';
+  } else {
+    document.getElementById('overMsg').textContent = `수집한 상자: ${collected}/5   점수: ${score}`;
+    document.getElementById('overScreen').style.display = 'flex';
+  }
+}
+
+function tick() {
+  if (!gameRunning) return;
+  timeLeft--;
+  score += 10;
+  updateUI();
+  if (timeLeft<=0) endGame(true);
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('boxes').textContent = collected;
+  document.getElementById('timer').textContent = timeLeft;
+  document.getElementById('hp').textContent = '♥'.repeat(hp) + '♡'.repeat(3-hp);
+}
+
+// ---- 카메라 ----
+function updateCam() {
+  const tx = player.x - W/2 + player.w/2;
+  const ty = player.y - H/2 + player.h/2;
+  camX += (tx - camX) * 0.12;
+  camY += (ty - camY) * 0.12;
+  camX = Math.max(0, Math.min(camX, COLS*TILE - W));
+  camY = Math.max(0, Math.min(camY, ROWS*TILE - H));
+}
+
+// ---- 드로우 ----
+function drawMap() {
+  for (let r=0;r<ROWS;r++) {
+    for (let c=0;c<COLS;c++) {
+      const x = c*TILE - camX, y = r*TILE - camY;
+      if (map[r][c]===1) {
+        ctx.fillStyle = '#1c1c2e';
+        ctx.fillRect(x,y,TILE,TILE);
+        ctx.fillStyle = '#2a2a40';
+        ctx.fillRect(x+1,y+1,TILE-2,4);
+        ctx.strokeStyle = '#333355';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x,y,TILE,TILE);
+      } else {
+        ctx.fillStyle = r%2===c%2 ? '#111118' : '#0f0f16';
+        ctx.fillRect(x,y,TILE,TILE);
+      }
+    }
+  }
+}
+
+function drawBoxes() {
+  for (const b of boxes) {
+    if (b.collected) continue;
+    const x = b.x - camX, y = b.y - camY;
+    const glow = (Math.sin(Date.now()/400)+1)/2;
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 10 + glow*10;
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(x,y,28,28);
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(x+2,y+2,24,4);
+    ctx.fillRect(x+2,y+22,24,4);
+    ctx.fillRect(x+12,y+2,4,24);
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawTraps() {
+  for (const t of purpleTraps) {
+    if (t.triggered) continue;
+    const x = t.x - camX, y = t.y - camY;
+    const alpha = 0.3 + Math.sin(t.age/15)*0.2;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#bf44ff';
+    ctx.beginPath();
+    ctx.arc(x+12,y+12,10,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawPlayer() {
+  const x = player.x - camX, y = player.y - camY;
+  if (invincible>0 && Math.floor(invincible/6)%2===0) return;
+
+  // 몸
+  ctx.fillStyle = '#f0e0c8';
+  ctx.beginPath();
+  ctx.roundRect(x,y,player.w,player.h,6);
+  ctx.fill();
+  // 눈
+  const ex = x + player.w*0.3, ey = y + player.h*0.3;
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(ex,ey,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+player.w*0.7,ey,3,0,Math.PI*2); ctx.fill();
+  // 하이라이트
+  ctx.fillStyle='rgba(255,255,255,0.3)';
+  ctx.fillRect(x+4,y+4,8,4);
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    const x = e.x - camX, y = e.y - camY;
+    const c = COLORS_LIST[e.type];
+
+    if (e.type===4) { // Purple - 특수 모양
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.ellipse(x+15,y+20,12,18,0,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle='rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.arc(x+10,y+12,3,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+20,y+12,3,0,Math.PI*2); ctx.fill();
+    } else {
+      // 몸통
+      ctx.shadowColor = c;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.roundRect(x,y,e.w,e.h,8);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // 눈
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(x+8,y+10,5,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+22,y+10,5,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#000';
+      ctx.beginPath(); ctx.arc(x+9,y+11,2.5,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+23,y+11,2.5,0,Math.PI*2); ctx.fill();
+
+      // 이름 태그
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(x-2,y-16,e.w+4,14);
+      ctx.fillStyle = c;
+      ctx.font = 'bold 10px Courier New';
+      ctx.textAlign = 'center';
+      ctx.fillText(NAMES[e.type], x+e.w/2, y-5);
+      ctx.textAlign = 'left';
+    }
+  }
+}
+
+function drawHUD() {
+  // 미니맵
+  const mw=80, mh=60, mx=W-mw-10, my=10;
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(mx,my,mw,mh);
+  for (let r=0;r<ROWS;r++)
+    for (let c=0;c<COLS;c++)
+      if (map[r][c]===1){
+        ctx.fillStyle='#334';
+        ctx.fillRect(mx+c*(mw/COLS),my+r*(mh/ROWS),mw/COLS,mh/ROWS);
+      }
+  // 플레이어 점
+  ctx.fillStyle='#fff';
+  ctx.fillRect(mx+(player.x/TILE)*(mw/COLS),my+(player.y/TILE)*(mh/ROWS),3,3);
+  // 적 점
+  for (const e of enemies){
+    ctx.fillStyle=COLORS_LIST[e.type];
+    ctx.fillRect(mx+(e.x/TILE)*(mw/COLS),my+(e.y/TILE)*(mh/ROWS),3,3);
+  }
+  // 상자 점
+  for (const b of boxes) if(!b.collected){
+    ctx.fillStyle='#ffd700';
+    ctx.fillRect(mx+(b.x/TILE)*(mw/COLS),my+(b.y/TILE)*(mh/ROWS),2,2);
+  }
+  ctx.strokeStyle='#555'; ctx.strokeRect(mx,my,mw,mh);
+}
+
+function loop() {
+  if (!gameRunning) return;
+  invincible = Math.max(0, invincible-1);
+  updatePlayer();
+  updateEnemies();
+  updateCam();
+
+  ctx.fillStyle='#0a0a0f';
+  ctx.fillRect(0,0,W,H);
+  drawMap();
+  drawTraps();
+  drawBoxes();
+  drawPlayer();
+  drawEnemies();
+  drawHUD();
+
+  animId = requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => { keys[e.key]=true; e.preventDefault(); });
+document.addEventListener('keyup',  e => { keys[e.key]=false; });
+</script>
+</body>
+</html>
